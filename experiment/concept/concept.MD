@@ -1,1 +1,0 @@
-Simple concept file, using Flask, werkzeug, gevent-socketio, jQuery. Bound together in python. Extremely basic: allows any number of people to connect to a local server, broadcasts any messages sent by individuals both to their own local browser and to all other connections. Stores all messages internally in a list.
