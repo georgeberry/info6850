@@ -3,7 +3,8 @@ monkey.patch_all()
 from flask import Flask, render_template, Response, request
 import werkzeug.serving
 from socketio import socketio_manage
-from socketio.namespace import BaseNamespace, RoomsMixin
+from socketio.namespace import BaseNamespace
+from socketio.mixins import RoomsMixin
 from socketio.server import SocketIOServer
 
 # app #
@@ -13,10 +14,16 @@ app = Flask(__name__)
 # views #
 @app.route('/')
 def hello():
-    return render_template('main.html')
+    return render_template('intro.html')
 
 
-# 
+@app.route('/<path:room>')
+def room_picker(room):
+    context = {'room': room} #pass args to the template renderer for the specific room
+    return render_template('room.html', **context)
+
+
+#  #
 
 
 # namespace #
@@ -24,32 +31,41 @@ class ChatNamespace(BaseNamespace, RoomsMixin):
     '''
     Rooms. Sorts people automatically into a random room.
     You have to enter a name.
-    Caps rooms at 3 people.
     Broadcast only to your room.
     Logs messages in a dictinoary keyed by rooms.
     '''
 
-    sockets = {}
+    sockets = {} #tracks sockets in the namespace
+    rooms = range(10)
+    room_dict = {} #key: users, value: room
 
     def recv_connect(self):
         print 'connected'
-        self.emit("previous", self.messages)
         self.sockets[id(self)] = self
 
     def recv_disconnect(self):
         super(ChatNamespace, self).disconnect()
         print 'disconnected'
 
-    def on_text(self, text):
-        self.messages.append(text)
+    def on_name(self, name):
+        self.session['name'] = name #session is dictionary associated with socket
+        self.room_dict[name] = 1 #put individual in a room
+        return redirect(url_for('room_picker', room = self.room_dict[name])) #redirect; may have to do this a different way
 
-        for ws in self.sockets.values():
-            ws.emit("text back", text)
-
-    def on_join():
-        pass
+    def on_user_message(self, msg):
+        self.emit_to_room(self.room, 'msg_to_room', self.session['name'], msg)
 
     
+
+
+
+
+
+
+
+
+
+
 
 
 # socket io server always defaults here #

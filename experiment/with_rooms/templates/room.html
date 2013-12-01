@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+
+{% block extrajs %}
+<script type='text/javascript'>
+    socket = io.connect('/chat');
+
+    window.room = '{{ room }}';
+
+
+    socket.on('connect', function(){
+    });
+
+    socket.on('announcement', function(){
+    });
+
+    socket.on('msg_to_room', message);
+
+    socket.on('reconnect', function(){
+    });
+
+    socket.on('reconnecting', function(){
+    });
+
+
+
+    //change DOM
+   
+    function message (from, msg){
+        $('').append(from, msg); //want to append formatted version
+    }
+
+    function clear (){
+        $('#message').val('').focus();
+    };
+
+
+    $('#send-message').submit(function(e){
+        e.preventDefault();
+        message('me', $('#message').val());
+        socket.emit('user message', $('#message').val());
+        clear();
+    });
+
+
+
+</script>
+{% endblock extrajs %}
+
+
+{% block content %}
+
+{% endblock content %}

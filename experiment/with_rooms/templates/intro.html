@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+
+{% block extrajs %}
+  <script>
+
+    var socket = io.connect('/chat');
+
+    socket.on('connect', function(){
+      console.log('client socket connected');
+    });
+
+    socket.on('disconnect', function(){
+      console.log('socket disconnected');
+    });
+
+    //change DOM
+    $(function (){
+      $('.user-name').submit(function(e){
+        e.preventDefault();
+        socket.emit('name', $('#userCode').val());
+      });
+    });
+
+  </script>
+{% endblock extrajs %}
+
+
+{% block content %}
+  <div class='container'>
+    <h1>proof of concept</h1>
+  </div>
+
+  <!-- input form -->
+  <div class='container'>
+    <form class='form-horizontal user-name' role='form'>
+      <div class='form-group'> <!-- for spacing -->
+        <label for='userCode' class='col-sm-2 control-label'>User Code</label> <!-- for specifies the input this is bound to -->
+        <div class='col-sm-6'>
+          <input type='text' class='form-control user-name' id='userCode' placeholder='User identification'>
+        </div>
+      </div>
+    </form>
+  </div>
+{% endblock content %}
