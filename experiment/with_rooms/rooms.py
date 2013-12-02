@@ -6,11 +6,15 @@ from socketio import socketio_manage
 from socketio.namespace import BaseNamespace
 from socketio.mixins import RoomsMixin
 from socketio.server import SocketIOServer
+from flask.ext.sqlalchemy import SQLAlchemy
+import time
 
 
 # app #
-app = Flask(__name__)
 
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/chat.db'
+db = SQLAlchemy(app)
 usrs = []
 
 
@@ -19,12 +23,6 @@ usrs = []
 @app.route('/')
 def hello():
     return render_template('intro.html')
-
-
-@app.route('/<path:room>')
-def room_picker(room):
-    context = {'room': room} #pass args to the template renderer for the specific room
-    return render_template('room.html', **context)
 
 
 @app.route('/validate', methods=['POST'])
@@ -36,22 +34,34 @@ def validate_or_kick():
     usrs.append(usr_id)
     if lookup(usr_id):
         print 'looked up'
-        return render_template('first_questions', usr_id = usr_id)
+        return render_template('room.html', room = 1)
     else:
         return render_template('intro.html')
 
 
-#one page form w/ questions, written to database
-@app.route('/<path:usr_id>')
+#build the rooms from unique identifiers
+@app.route('/<path:room>')
+def room_picker(room):
+    context = {'room': room} #pass args to the template renderer for the specific room
+    return render_template('room.html', **context)
+
+
+#one page form w/ questions, answers written to database
+@app.route('/q1/<path:usr_id>')
 def first_questions():
     pass
 
 
-#one page form w/ questions, written to database
-@app.route('/<path:usr_id>')
+#one page form w/ questions, answers written to database
+@app.route('/q2/<path:usr_id>')
 def second_questions():
     pass
 
+
+#instructions page, with a short written answer section, saved to database
+@app.route('/i/<path:usr_id>')
+def instructions():
+    pass
 
 
 # db models #
@@ -75,6 +85,7 @@ def join_or_create():
 
 
 # namespace #
+
 class ChatNamespace(BaseNamespace, RoomsMixin):
     '''
     Rooms. Sorts people automatically into a random room.
@@ -95,6 +106,8 @@ class ChatNamespace(BaseNamespace, RoomsMixin):
             app.preprocess_request()
             del kwargs['request']
         super(ChatNamespace, self).__init__(*args, **kwargs)
+        if not hasattr(self.socket, 'rooms'):
+            self.socket.rooms = set() # a set of simple strings
 
     def recv_connect(self):
         print 'connect', self
@@ -105,9 +118,11 @@ class ChatNamespace(BaseNamespace, RoomsMixin):
     def recv_disconnect(self, *args, **kwargs):
         print 'begin disconnect'
         if self.ctx:
-            self.ctx.pop()
-        super(ChatNamespace, self).disconnect(*args, **kwargs)
-        print 'end disconnect'
+            try:
+                self.ctx.pop()
+            except:
+                'normal teardown nonetype'
+        self.disconnect(silent=True)
 
     def on_username(self, usr):
         room = 1 #temp
@@ -118,19 +133,19 @@ class ChatNamespace(BaseNamespace, RoomsMixin):
         self.room_dict[room] = usr #put individual in a room
         self.emit("room_url", url_for('room_picker', room = room))
 
-        #need an authentication check in here
-
     def on_join(self, room):
         print 'joined'
-        print usrs
+        print usrs, self.ns_name, room
         self.join(str(room))
 
     def on_user_message(self, msg):
         #assumes a max of 1 room
-        self.emit_to_room(self.session_by_id[id(self)]['room'], 'msg_to_room', self.session_by_id[id(self)]['user'], msg)
+        print 'message away!'
+        self.emit_to_room('one', 'msg_to_room', usrs[0], msg)
 
 
 # socket io server always defaults here #
+
 @app.route('/socket.io/<path:rest>')
 def push_stream(rest):
     try:
@@ -142,6 +157,7 @@ def push_stream(rest):
 
 
 # serve #
+
 @werkzeug.serving.run_with_reloader
 def run_dev_server():
     app.debug = True
@@ -150,5 +166,6 @@ def run_dev_server():
 
 
 # run program #
+
 if __name__ == '__main__':
     run_dev_server()
