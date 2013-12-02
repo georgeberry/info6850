@@ -15,7 +15,8 @@ import time
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/chat.db'
 db = SQLAlchemy(app)
-usrs = []
+usrs = {} #user information keyed by hash
+
 
 
 # views #
@@ -29,39 +30,51 @@ def hello():
 def validate_or_kick():
     '''user id input here; check for validity
         redirect to an appropriate chatroom
+
+        can be setup to take inputs from a bunch of form-based pages and route accordingly
     '''
+
+    #for name form
     usr_id = request.form['name']
     usrs.append(usr_id)
     if lookup(usr_id):
         print 'looked up'
-        return render_template('room.html', room = 1)
+        return redirect(url_for('room_picker', room = 'one'))
     else:
-        return render_template('intro.html')
+        return redirect(url_for('hello'))
+
+    #for instructions & instruction q/a
+
+    #for q1 form
+
+    #for chat
+
+    #for q2 form
 
 
-#build the rooms from unique identifiers
+# build the rooms from unique identifiers #
 @app.route('/<path:room>')
 def room_picker(room):
     context = {'room': room} #pass args to the template renderer for the specific room
     return render_template('room.html', **context)
 
 
-#one page form w/ questions, answers written to database
+# one page form w/ questions, answers written to database #
 @app.route('/q1/<path:usr_id>')
-def first_questions():
-    pass
+def first_questions(usr_id):
+    return render_template('questions1.html')
 
 
-#one page form w/ questions, answers written to database
+# one page form w/ questions, answers written to database #
 @app.route('/q2/<path:usr_id>')
-def second_questions():
-    pass
+def second_questions(usr_id):
+    return render_template('questions2.html')
 
 
-#instructions page, with a short written answer section, saved to database
+# instructions page, with a short written answer section, saved to database #
 @app.route('/i/<path:usr_id>')
-def instructions():
-    pass
+def instructions(usr_id):
+    return render_template('instructions.html')
 
 
 # db models #
@@ -94,6 +107,7 @@ class ChatNamespace(BaseNamespace, RoomsMixin):
     Logs messages in a dictionary keyed by rooms.
     '''
     session_by_id = {}
+    namespace_local_info = {}
     room_dict = {} #key: room, value: users
     sockets = {} #tracks sockets in the namespace
 
@@ -125,7 +139,7 @@ class ChatNamespace(BaseNamespace, RoomsMixin):
         self.disconnect(silent=True)
 
     def on_username(self, usr):
-        room = 1 #temp
+        room = 'one' #temp
         print 'username', self
         self.session['name'] = usr
         self.session_by_id[id(self)]['user'] = usr
