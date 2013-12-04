@@ -1,9 +1,3 @@
-'''
-@by George Berry (geb97@cornell.edu)
-@Cornell Dpt of Sociology (Social Dynamics Lab)
-@December 2013
-'''
-
 from gevent import monkey
 monkey.patch_all()
 from flask import Flask, render_template, Response, request, redirect, url_for
@@ -23,6 +17,8 @@ import time
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/chat.db'
+app.debug=True
+app.config['PORT'] = 5000
 db = SQLAlchemy(app)
 
 users, rooms = pickle.load(open('db/names.p', 'rb'))
@@ -161,6 +157,7 @@ class ChatNamespace(BaseNamespace, RoomsMixin):
 
     def on_join(self, room):
         print 'joined'
+        print users, self.ns_name, room
         self.join(str(room))
 
     def on_user_message(self, msg):
@@ -177,20 +174,17 @@ def push_stream(rest):
         real_request = request._get_current_object()
         socketio_manage(request.environ, {'/chat': ChatNamespace}, request=real_request)
     except:
-        app.logger.error('Exception while handling sockcketio connection', exc_info=True)
+        app.logger.error('Exception while handling socketio connection', exc_info=True)
     return Response()
 
 
 # serve #
 
-@werkzeug.serving.run_with_reloader
-def run_dev_server():
-    app.debug = True
-    port = 6020
-    SocketIOServer(('', port), app, resource='socket.io').serve_forever()
+def run_server():
+    SocketIOServer(('', app.config['PORT']), app, resource='socket.io').serve_forever()
 
 
 # run program #
 
 if __name__ == '__main__':
-    run_dev_server()
+    run_server()

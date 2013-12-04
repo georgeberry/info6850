@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+
+{% block content %}
+  <div class='container'>
+    <h1>Please answer the questions below.</h1>
+  </div>
+
+  <!-- input form -->
+  <div class='container'>
+    <form role='form'>
+      <div class='form-group'>
+        <label for='example-input1'>Question 1</label>
+        <input type='text' class='form-control' id='example-input1' placeholder='Response'>
+      </div>
+      <div class='form-group'>
+        <input type="text" class="form-control" placeholder="Text input">
+      </div>
+      <div class='form-group'>
+        <div class='checkbox'>
+          <label>
+            <input type='checkbox' value = ''>
+            Option one is this
+          </label>
+        </div>
+      </div>
+    </form>
+  </div>
+{% endblock content %}

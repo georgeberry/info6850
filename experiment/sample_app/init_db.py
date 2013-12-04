@@ -1,9 +1,3 @@
-'''
-@by George Berry (geb97@cornell.edu)
-@Cornell Dpt of Sociology (Social Dynamics Lab)
-@December 2013
-'''
-
 from flask import Flask
 from flask.ext.sqlalchemy import SQLAlchemy
 import random, string

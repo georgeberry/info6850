@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+
+{% block extrajs %}
+<script type='text/javascript'>
+    socket = io.connect('/chat');
+
+    window.room = '{{ room }}';
+
+    socket.on('connect', function(){
+        $('#textbox').addClass('connected');
+        socket.emit('join', window.room);
+    });
+
+    socket.on('announcement', function(){
+    });
+
+    socket.on('msg_to_room', message);
+
+    socket.on('reconnect', function(){
+    });
+
+    socket.on('reconnecting', function(){
+    });
+
+    //change DOM
+   
+    function message (origin, msg){
+        $('#textbox').append(origin, msg); //want to append formatted version
+    }
+
+    function clear (){
+        $('#message').val('').focus();
+    };
+
+
+    $('.enter-text').submit(function(e){
+        e.preventDefault();
+        message('me', $('#textEntry').val());
+        socket.emit('user message', $('#textEntry').val());
+        clear();
+    });
+
+
+
+</script>
+{% endblock extrajs %}
+
+
+{% block content %}
+<div class='container'>
+  <h1>room {{ room }}</h1>
+</div>
+
+
+  <div class='container'>
+    <form class='form-horizontal enter-text' role='form'>
+      <div class='form-group'> <!-- for spacing -->
+        <label for='textEntry' class='col-sm-2 control-label'>Type</label> <!-- for specifies the input this is bound to -->
+        <div class='col-sm-6'>
+          <input type='text' class='form-control message' id='textEntry' placeholder='Enter text'>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div class='container' id='textbox'>
+  </div>
+
+
+{% endblock content %}
