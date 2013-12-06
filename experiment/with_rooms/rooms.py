@@ -16,6 +16,7 @@ from flask.ext.sqlalchemy import SQLAlchemy
 import cPickle as pickle
 from hashlib import md5
 import sys
+from init_db import gen_names
 
 import time
 
@@ -25,7 +26,12 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////tmp/chat.db'
 db = SQLAlchemy(app)
 
-users, rooms = pickle.load(open('db/names.p', 'rb'))
+
+# load names or get names #
+try:
+    users, rooms = pickle.load(open('db/names.p', 'rb'))
+except:
+    users.rooms = gen_names(500, 6, 8)
 
 
 # views #
@@ -42,28 +48,38 @@ def validate_or_kick():
 
         can be setup to take inputs from a bunch of form-based pages and route accordingly
     '''
+    print request.form
 
-    #for name form
-    usr_id = str(request.form['name'])
-    try: 
-        if 'logons' in users[usr_id].keys():
-            users[usr_id]['logons'] += 1
-        elif 'logons' not in users[usr_id].keys():
-            users[usr_id]['logons'] = 1
-    except:
-        print 'bad login attempt with code', usr_id
-        return redirect(url_for('hello'))
-    users[usr_id]['md5'] = md5(usr_id).hexdigest()
-    return redirect(url_for('instructions', usr_id = users[usr_id]['md5']))
+    if 'name' in request.form.keys():
+        usr_id = str(request.form['name'])
+        try: 
+            if 'logons' in users[usr_id].keys():
+                users[usr_id]['logons'] += 1
+            elif 'logons' not in users[usr_id].keys():
+                users[usr_id]['logons'] = 1
+        except:
+            print 'bad login attempt with code', usr_id
+            return redirect(url_for('hello'))
+        users[usr_id]['md5'] = md5(usr_id).hexdigest()
+        return redirect(url_for('instructions', usr_id = users[usr_id]['md5']))
 
+    if 'instructions' in request.form.keys():
+        return redirect(url_for('first_questions', usr_id = 'user1'))
 
-    #for instructions & instruction q/a
+    if 'questions1' in request.form.keys():
+        return redirect(url_for('room_picker', room = 'room1'))
 
-    #for q1 form
+    if 'end_rooms' in request.form.keys():
+        return redirect(url_for('second_questions', usr_id = 'user1'))
 
-    #for chat
+    if 'questions2' in request.form.keys():
+        return redirect(url_for('demographics' , usr_id = 'user1'))
 
-    #for q2 form
+    if 'demographics' in request.form.keys():
+        return redirect(url_for('payment'))
+
+    if 'payment' in request.form.keys():
+        return redirect(url_for('thanks'))
 
 
 # instructions page, with a short written answer section, saved to database #
@@ -94,6 +110,10 @@ def demographics(usr_id):
 @app.route('/checkout/<path:usr_id>')
 def payment(usr_id):
     return render_template('payment.html')
+
+@app.route('/ty/<path:usr_id>')
+def thanks(usr_id):
+    return render_template('thanks.html')
 
 
 # helpers #
