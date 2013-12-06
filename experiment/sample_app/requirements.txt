@@ -1,0 +1,15 @@
+Flask==0.10.1
+Flask-SQLAlchemy==1.0
+Flask-Sockets==0.1
+Jinja2==2.7.1
+MarkupSafe==0.18
+SQLAlchemy==0.8.3
+Werkzeug==0.9.4
+anyjson==0.3.3
+gevent==0.13.8
+-e git+https://github.com/abourget/gevent-socketio@99f96b0b379b87a256e4f9092e513b33bbb2836d#egg=gevent_socketio-master
+gevent-websocket==0.3.6
+greenlet==0.4.1
+gunicorn==18.0
+itsdangerous==0.23
+wsgiref==0.1.2
