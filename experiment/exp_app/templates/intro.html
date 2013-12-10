@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+
+{% block extrajs %}
+  <script>
+//
+//    var socket = io.connect('/chat');
+//
+//    socket.on('connect', function(){
+//      console.log('client socket connected');
+//    });
+//
+//    socket.on('disconnect', function(){
+//      console.log('socket disconnected');
+//    });
+//
+//    socket.on('room_url', function(url){
+//      //window.location.replace(url);
+//    });
+//
+//    //change DOM
+//    $(function (){
+//      $('.user-name').submit(function(e){
+//        e.preventDefault();
+//        socket.emit('username', $('#userCode').val());
+//      });
+//    });
+  </script>
+{% endblock extrajs %}
+
+
+{% block content %}
+  <div class='container'>
+    <h1>proof of concept</h1>
+  </div>
+
+  <!-- input form -->
+  <div class='container'>
+    <form class='form-horizontal' role='form' action='{{ url_for('validate_or_kick') }}' method='POST'>
+      <div class='form-group'> <!-- for spacing -->
+        <label for='name' class='col-sm-2 control-label'>User Code</label> <!-- for specifies the input this is bound to -->
+        <div class='col-sm-6'>
+          <input type='text' class='form-control' id='name' placeholder='User identification code' name='name'> <!--name parameter really matters-->
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="col-sm-offset-2 col-sm-10">
+          <button type="submit" class="btn btn-default">Submit</button>
+        </div>
+      </div>
+    </form>
+  </div>
+{% endblock content %}
