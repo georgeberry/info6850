@@ -8,7 +8,6 @@ from networkx import *
 import datetime as dt
 import csv
 import cPickle as pickle
-import multiprocessing as mp
 from functools import wraps
 import time
 import re
@@ -18,27 +17,7 @@ import sys
 from itertools import chain
 
 
-##data path
-
-#full data
-main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareCheckins20110101-20110731.csv'
-edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
-
-#test data
-main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/Fsqrtest.csv'
-edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
-
-output1 = 'summary.csv'
-output2 = 'big_file.csv'
-
-#worker function run by MP process
-def worker(input, output):
-    for func, args in iter(input.get, 'STOP'):
-        res = func(*args)
-        output.put(res)
-
-
-##global functions
+#global functions
 
 def timer(func):
     @wraps(func)
@@ -51,8 +30,7 @@ def timer(func):
     return wrapper
 
 
-#was a classmethod, may have broken MP 
-def flatten(items, ignore_types=(str, bytes)):
+def flatten(items, ignore_types=(str, bytes)): #yeah classmethod generator
     for x in items:
         if isinstance(x, Iterable) and not isinstance(x, ignore_types):
             for element in flatten(x):
@@ -61,99 +39,14 @@ def flatten(items, ignore_types=(str, bytes)):
             yield x
 
 
-#this is here because it can't be called from a class
-#becuase python MP sucks
-@timer
-def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period): #pass info from 1 period
-    errors1 = {} #egos with no friends
-    errors2 = {} #alters with no activity in the previous period
-    #based on spot checking and validating with small datset, everything looks good
+main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareCheckins20110101-20110731.csv'
+edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
 
-    config_results = {}
-    checkin_by_user_results = {}
+main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/Fsqrtest.csv'
+edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
 
-    for user in users_by_time_during_period['after'].keys():
-        try: #can fail if no friends
-            ego_net = ego_graph(graph, user)
-            #can only influence ego to checkin places never checked in before
-
-            #for node in nodes_iter(ego_net):
-            #    ego_net.node[node]['venues'] = []
-
-            temp = users_by_time_during_period['after'][user]
-
-            ego_net.node[user]['new venues'] = [temp[x]['venue'] for x in temp.keys() if temp[x]['venue'] not in users_by_time_during_period['prev_venues'][user]] #holds new venues for period
-
-
-        except:
-            if user not in errors1:
-                errors1[user] = [['no friends for', user, '; ego =', user]]
-            else:
-                errors1[user].append(['no previous for user', user, '; ego =', user])                    
-            continue
-
-
-        for vertex in ego_net.nodes(): #venues as node attributes
-            if vertex == user:
-                continue
-            try:
-                #we may not want to take a set here: number of exposures is important
-                temp = users_by_time_during_period['before'][vertex]
-                ego_net.node[vertex]['venues'] = list(set([temp[x]['venue'] for x in temp.keys()]))
-
-            except:
-                if vertex not in errors2:
-                    errors2[vertex] = [['no previous for user', vertex, '; ego =', user]]
-                else:
-                    errors2[vertex].append(['no previous for user', vertex, '; ego =', user])
-                continue
-
-        #ego network done
-        venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()])] #should get counts
-        ego_net.node[user]['venues'] = list(set(copy.deepcopy(venues))) #all alter venues #new venues stored in ['new venues']
-
-        venues = Counter(venues)
-
-        for venue in venues.keys():
-            #subgraph of only people who have checked into "venue" plus the ego
-
-            sg = ego_net.subgraph([n for n, attributes in ego_net.node.items() if venue in attributes['venues']]) #if venue is in node attrbute 'venues'
-
-            #goodbye, ego
-            sg.remove_node(user)
-
-            #graph properties
-            configuration = ''.join(str(x) for x in sorted(degree(sg).values()))
-            configuration = ':'.join((configuration, str(number_connected_components(sg))))
-
-            num = sg.number_of_nodes()
-            edge = sg.number_of_edges()
-            if venue in ego_net.node[user]['new venues']:
-                ego_checkin = 1
-            else:
-                ego_checkin = 0
-
-            #store adoption by network configuration
-            if configuration not in config_results:
-                config_results[configuration] = {'exposures': 0, 'adoptions': 0}
-
-            config_results[configuration]['exposures'] += 1
-
-            if ego_checkin == 1:
-                config_results[configuration]['adoptions'] += 1
-
-
-            #store stats by user, by venue
-            if user not in checkin_by_user_results:
-                #keyed by user then checkin
-                checkin_by_user_results[user] = {venue: {'config': configuration, 'neighbors': num, 'triangles': edge, 'ego checkin': ego_checkin, 'loc':venue_loc[venue], 'period': period} }
-            elif venue not in checkin_by_user_results[user]:
-                checkin_by_user_results[user][venue] = {'config': configuration, 'neighbors': num, 'triangles': edge, 'ego checkin': ego_checkin, 'loc': venue_loc[venue], 'period': period}
-
-    return config_results, checkin_by_user_results
-
-
-## classes
+output1 = 'summary.csv'
+output2 = 'big_file.csv'
 
 class interval:
     '''
@@ -190,18 +83,6 @@ class fsqr:
     '''
     @timer
     def __init__(self, main_path, edgelist_path): 
-
-        #hack, start mp's now
-        #feed the queue later
-        self.task_queue = mp.Queue()
-        self.done_queue = mp.Queue()
-
-        self.NUM_PROC = 6
-
-        #the procs literally just sit around waiting for stuff to go on the queue
-        for i in range(self.NUM_PROC):
-            mp.Process(target = worker, args = (self.task_queue, self.done_queue)).start()
-
         self.by_checkin = {}
         self.g = Graph()
         self.venue_loc = {}
@@ -218,6 +99,9 @@ class fsqr:
                     self.venue_loc[venue] = loc
 
                 line_number += 1
+
+        #by_user, get_rid_of = cls.chuck_em(by_user) #gets rid of the junk
+
 
         with open(edgelist_path) as g:
             edgelist = []
@@ -387,44 +271,107 @@ class fsqr:
 
 
     @timer
-    def call_parallel(self):
+    def user_analysis(self): #takes one time period, composed of before and after
+        #don't be scared by errors, they can arise in many cases
+        #ego has no friends over the dataset
+        #alter has no activity in the previous period
+        
+        errors1 = {} #egos with no friends
+        errors2 = {} #alters with no activity in the previous period
+        #based on spot checking and validating with small datset, everything looks good
 
         self.config_results = {}
         self.checkin_by_user_results = {}
 
-        TASKS = [(user_analysis_parallel, (self.users_by_time[period], self.g, self.venue_loc, period)) for period in self.users_by_time.keys()]
 
-        for task in TASKS:
-            self.task_queue.put(task)
 
-        for i in range(len(TASKS)):
-            config_results, user_results = self.done_queue.get()
-            print len(config_results), len(user_results)
-            for config in config_results.keys():
-                if config not in self.config_results:
-                    self.config_results[config] = config_results[config]
-                else:
-                    self.config_results[config]['exposures'] = self.config_results[config]['exposures'] + config_results[config]['exposures']
-                    self.config_results[config]['adoptions'] = self.config_results[config]['adoptions'] + config_results[config]['adoptions']
+        for period in self.users_by_time.keys():
 
-            for user in user_results.keys():
-                if user not in self.checkin_by_user_results:
-                    self.checkin_by_user_results[user] = user_results[user]
-                else:
-                    self.checkin_by_user_results[user] = dict(self.checkin_by_user_results[user].items() + user_results[user].items())
+            for user in self.users_by_time[period]['after'].keys():
+                try: #can fail if no friends
+                    ego_net = ego_graph(self.g, user)
+                    #can only influence ego to checkin places never checked in before
 
-        #shut down procs
-        for i in range(self.NUM_PROC):
-            self.task_queue.put('STOP')
+                    #for node in nodes_iter(ego_net):
+                    #    ego_net.node[node]['venues'] = []
 
-        print len(self.config_results.keys()), len(self.checkin_by_user_results.keys())
+                    temp = self.users_by_time[period]['after'][user]
 
+                    ego_net.node[user]['new venues'] = [temp[x]['venue'] for x in temp.keys() if temp[x]['venue'] not in self.users_by_time[period]['prev_venues'][user]] #holds new venues for period
+
+
+                except:
+                    if user not in errors1:
+                        errors1[user] = [['no friends for', user, 'in time', period, '; ego =', user]]
+                    else:
+                        errors1[user].append(['no previous for user', user, 'in time', period, '; ego =', user])                    
+                    continue
+
+
+                for vertex in ego_net.nodes(): #venues as node attributes
+                    if vertex == user:
+                        continue
+                    try:
+                        #we may not want to take a set here: number of exposures is important
+                        temp = self.users_by_time[period]['before'][vertex]
+                        ego_net.node[vertex]['venues'] = list(set([temp[x]['venue'] for x in temp.keys()]))
+
+                    except:
+                        if vertex not in errors2:
+                            errors2[vertex] = [['no previous for user', vertex, 'in time', period, '; ego =', user]]
+                        else:
+                            errors2[vertex].append(['no previous for user', vertex, 'in time', period, '; ego =', user])
+                        continue
+
+                #ego network done
+                venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()])] #should get counts
+                ego_net.node[user]['venues'] = list(set(copy.deepcopy(venues))) #all alter venues #new venues stored in ['new venues']
+
+                venues = Counter(venues)
+
+                for venue in venues.keys():
+                    #subgraph of only people who have checked into "venue" plus the ego
+
+                    sg = ego_net.subgraph([n for n, attributes in ego_net.node.items() if venue in attributes['venues']]) #if venue is in node attrbute 'venues'
+
+                    #goodbye, ego
+                    sg.remove_node(user)
+
+                    #graph properties
+                    configuration = ''.join(str(x) for x in sorted(degree(sg).values()))
+                    configuration = ':'.join((configuration, str(number_connected_components(sg))))
+
+                    num = sg.number_of_nodes()
+                    edge = sg.number_of_edges()
+                    if venue in ego_net.node[user]['new venues']:
+                        ego_checkin = 1
+                    else:
+                        ego_checkin = 0
+
+                    #store adoption by network configuration
+                    if configuration not in self.config_results:
+                        self.config_results[configuration] = {'exposures': 0, 'adoptions': 0}
+
+                    self.config_results[configuration]['exposures'] += 1
+
+                    if ego_checkin == 1:
+                        self.config_results[configuration]['adoptions'] += 1
+
+
+                    #store stats by user, by venue
+                    if user not in self.checkin_by_user_results:
+                        #keyed by user then checkin
+                        self.checkin_by_user_results[user] = {venue: {'config': configuration, 'neighbors': num, 'triangles': edge, 'ego checkin': ego_checkin, 'loc': self.venue_loc[venue], 'period': period} }
+                    elif venue not in self.checkin_by_user_results[user]:
+                        self.checkin_by_user_results[user][venue] = {'config': configuration, 'neighbors': num, 'triangles': edge, 'ego checkin': ego_checkin, 'loc': self.venue_loc[venue], 'period': period}
+
+            print 'period', period, 'done'
+        return self.config_results, self.checkin_by_user_results
 
     @timer
     def output(self):
         with open(output1, 'wb') as w: #aggregate
             writer = csv.writer(w)
-            writer.writerow(['network config', 'adoptions', 'exposures', 'convert ratio'])
             for key in self.config_results.keys():
                 t = self.config_results[key]
                 config, adoptions, exposures = key, t['adoptions'], t['exposures']
@@ -432,21 +379,27 @@ class fsqr:
 
         with open(output2, 'wb') as w: #split up
             writer = csv.writer(w)
-            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'long', 'lat', 'config', 'ego checkin'])
             for key in self.checkin_by_user_results.keys():
                 for venue_key in self.checkin_by_user_results[key].keys():
                     t = self.checkin_by_user_results[key][venue_key]
 
                     user, venue, period, neighbors, triangles, long, lat, config, ego_checkin = key, venue_key, t['period'], t['neighbors'], t['triangles'], t['loc'][0], t['loc'][1], t['config'], t['ego checkin']
 
-                    writer.writerow([user, venue, period, neighbors, triangles, long, lat, config, ego_checkin])
+                    writer.writerow([user, venue, period, neighbors, triangles, loc, config, ego_checkin])
+
 
     @timer
     def summary_stats(self):
         #num users in each period
         self.num_users = {k: (len(v['before']), len(v['after'])) for k, v in self.users_by_time.iteritems()}
 
+
     def __call__(self, durationA, durationB): #after init
         self.users_by_time(durationA, durationB)
         self.user_analysis()
         self.summary_stats()
+
+
+
+
+
