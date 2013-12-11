@@ -3,7 +3,7 @@
 @created: dec 7 2013
 '''
 
-import fuckit
+#import fuckit
 from networkx import *
 import datetime as dt
 import csv
@@ -16,10 +16,34 @@ from collections import OrderedDict, Counter, Iterable
 import copy
 import sys
 from itertools import chain
+from random import choice
+import gc
+
+import numpy as np
+import scipy
+from sklearn.cluster import KMeans, MiniBatchKMeans
 
 
-#global functions
+##data path
 
+#full data
+main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareCheckins20110101-20110731.csv'
+edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
+
+#test data
+#main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/Fsqrtest.csv'
+#edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
+
+##global functions
+
+#worker function run by MP process
+def worker(input, output):
+    for func, args in iter(input.get, 'STOP'):
+        res = func(*args)
+        output.put(res)
+        gc.collect()
+
+#how long's it take?
 def timer(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -30,8 +54,7 @@ def timer(func):
         return result
     return wrapper
 
-
-def flatten(items, ignore_types=(str, bytes)): #yeah classmethod generator
+def flatten(items, ignore_types=(str, bytes)):
     for x in items:
         if isinstance(x, Iterable) and not isinstance(x, ignore_types):
             for element in flatten(x):
@@ -41,16 +64,15 @@ def flatten(items, ignore_types=(str, bytes)): #yeah classmethod generator
 
 
 #this is here because it can't be called from a class
+#becuase python MP sucks
 @timer
-def user_analysis_parallel(users_by_time_during_period, graph): #pass info from 1 period
-    #has keys before, after, prev_venues
-    #returns results dict
-
+def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period): #pass info from 1 period
     errors1 = {} #egos with no friends
     errors2 = {} #alters with no activity in the previous period
     #based on spot checking and validating with small datset, everything looks good
 
-    results = {}
+    config_results = {} #aggregate results for network config
+    checkin_by_user_results = {} #observation level results
 
     for user in users_by_time_during_period['after'].keys():
         try: #can fail if no friends
@@ -89,8 +111,7 @@ def user_analysis_parallel(users_by_time_during_period, graph): #pass info from 
                 continue
 
         #ego network done
-        venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()])]
-
+        venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()])] #should get counts
         ego_net.node[user]['venues'] = list(set(copy.deepcopy(venues))) #all alter venues #new venues stored in ['new venues']
 
         venues = Counter(venues)
@@ -103,42 +124,41 @@ def user_analysis_parallel(users_by_time_during_period, graph): #pass info from 
             #goodbye, ego
             sg.remove_node(user)
 
+            #graph properties
             configuration = ''.join(str(x) for x in sorted(degree(sg).values()))
             configuration = ':'.join((configuration, str(number_connected_components(sg))))
 
-            #store adoption for each user
-            if configuration not in results:
-                results[configuration] = {'exposures': 0, 'adoptions': 0}
-
-            results[configuration]['exposures'] += 1
-
+            num = sg.number_of_nodes()
+            edge = sg.number_of_edges()
             if venue in ego_net.node[user]['new venues']:
-                results[configuration]['adoptions'] += 1
+                ego_checkin = 1
+            else:
+                ego_checkin = 0
 
-            #let's analyze
-            #need list of all alter venues and counts (Counter)
-            #need to iterate over them
-            #if only one alter has a venue, skip it
-            #if 2+, record: 
-            # num nodes with venue
-            # num closed triads
-            # num components
-            # specific network structure
-            # whether ego adopts that venue
-            # results dict: 
+            #store adoption by network configuration
+            if configuration not in config_results:
+                config_results[configuration] = {'exposures': 0, 'adoptions': 0}
 
-    print 'proc completed'
-    return results
+            config_results[configuration]['exposures'] += 1
+
+            if ego_checkin == 1:
+                config_results[configuration]['adoptions'] += 1
 
 
-main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareCheckins20110101-20110731.csv'
-edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
+            #store stats by user, by venue
+            if user not in checkin_by_user_results:
+                #keyed by user then checkin
+                checkin_by_user_results[user] = {venue: {'config': configuration, 'neighbors': num, 'triangles': edge, 'ego checkin': ego_checkin, 'loc':venue_loc[venue], 'period': period} }
+            elif venue not in checkin_by_user_results[user]:
+                checkin_by_user_results[user][venue] = {'config': configuration, 'neighbors': num, 'triangles': edge, 'ego checkin': ego_checkin, 'loc': venue_loc[venue], 'period': period}
 
-main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/Fsqrtest.csv'
-edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
+    return config_results, checkin_by_user_results
 
 
-class interval:
+
+## classes
+
+class interval: #could be made more efficient with time
     '''
     simply checks whether a date is in the time period
     returns 0 if it's before cutpoint, 1 if it's after
@@ -168,13 +188,32 @@ class interval:
 class fsqr:
     '''
     contains data objects and analysis methods
-    this will return a class object with the appropriate objects
     calling __init__ produces a dict of checkins and a full network
+    you probably want to call init and then just call the class with sliding window durations
+    __call__ should be configured to accept these, carry out main analysis (MP'd)
+    prints to CSV's
     '''
     @timer
     def __init__(self, main_path, edgelist_path): 
+
+        #hack, start mp's now
+        #feed the queue later
+        #saves on ram
+        self.task_queue = mp.Queue()
+        self.done_queue = mp.Queue()
+
+        self.NUM_PROC = 6
+
+        #the procs literally just sit around waiting for stuff to go on the queue
+        for i in range(self.NUM_PROC):
+            mp.Process(target = worker, args = (self.task_queue, self.done_queue)).start()
+
         self.by_checkin = {}
         self.g = Graph()
+        self.venue_loc = {}
+        self.user_loc = {}
+        self.user_centroid = {}
+        self.time_period = {}
 
         with open(main_path, 'r') as f:
             reader = csv.reader(f)
@@ -184,11 +223,15 @@ class fsqr:
                 user, loc, date, venue = int(row[0]), (float(row[1]), float(row[2])), self.dateify(row[3]), int(row[4])
 
                 self.by_checkin[line_number] = { 'user': user, 'loc': loc, 'date': date, 'venue': venue }
+                if venue not in self.venue_loc:
+                    self.venue_loc[venue] = loc
+
+                if user not in self.user_loc:
+                    self.user_loc[user] = [[loc[0], loc[1]]]
+                else:
+                    self.user_loc[user].append([loc[0], loc[1]]) 
 
                 line_number += 1
-
-        #by_user, get_rid_of = cls.chuck_em(by_user) #gets rid of the junk
-
 
         with open(edgelist_path) as g:
             edgelist = []
@@ -206,24 +249,41 @@ class fsqr:
 
             del edgelist
 
-        #self.by_checkin = OrderedDict(sorted(self.by_checkin.items(), key=lambda x: (x[1]['date'] - dt.datetime(1970,1,1)).total_seconds())) #sorts dict by date
+
+        #need user centroids to compute distance
+        clusters = 4
+
+        for usr in self.user_loc.keys():
+            if len(self.user_loc[usr]) >= (clusters + 1) and len(self.user_loc[usr]) < (45):
+                n = np.array(self.user_loc[usr])
+                k = KMeans(init='k-means++', n_clusters = clusters, n_init=10).fit(n)
+                cent, label = k.cluster_centers_, k.labels_
+                mean_group = Counter(list(label)).most_common(1)[0][0] # most common cluster number
+                self.user_centroid[usr] = cent[mean_group]
+            elif len(self.user_loc[usr]) > 45:
+                n = np.array(self.user_loc[usr])
+                k = MiniBatchKMeans(init='k-means++', n_clusters = clusters, n_init=10, batch_size = 45).fit(n)
+                cent, label = k.cluster_centers_, k.labels_
+                mean_group = Counter(list(label)).most_common(1)[0][0] # most common cluster number
+                self.user_centroid[usr] = cent[mean_group]   
+
+            else:
+                self.user_centroid[usr] = choice(self.user_loc[usr]) #random choice if not enough obs
+
+
+        del self.user_loc
+
 
         #messy 
         #gets first and last dates in data
         #gets difference in days and seconds between these dates
-        self.time_period = {'start': self.by_checkin.items()[0][1]['date'], 'stop': self.by_checkin.items()[len(self.by_checkin.items()) - 1][1]['date'], 'total': self.by_checkin.items()[len(self.by_checkin.items()) - 1][1]['date'] - self.by_checkin.items()[0][1]['date'] } 
+        #assumes we read in by date
+        self.time_period = {'start': self.by_checkin[0]['date'], 'stop': self.by_checkin[len(self.by_checkin.items()) - 1]['date'], 'total': self.by_checkin[len(self.by_checkin.items()) - 1]['date'] - self.by_checkin[0]['date'] } 
 
-    #@staticmethod
-    #@timer
-    #def chuck_em(by_user): #returns list of users with no friends
-    #    get_rid_of = []
-    #    for usr in by_user.keys():
-    #        if len(by_user[usr]['neighbors']) < 2:
-    #            del by_user[usr]
-    #            get_rid_of.append(usr)
-    #    return by_user, get_rid_of
+        print self.time_period
 
-    @staticmethod #quickly transforms string date into datetime
+
+    @staticmethod #transforms string date into datetime
     def dateify(date_as_string):
         r = [int(x) for x in re.split('\s|:|-', date_as_string)]
         return dt.datetime(r[0], r[1], r[2], r[3], r[4], r[5])
@@ -285,7 +345,7 @@ class fsqr:
         # there may be double counting in the durationA window
 
         if durationA < durationB:
-            return 'durationA msut be >= durationB'
+            return 'durationA must be >= durationB'
 
         self.analysis_periods = []
         self.users_by_time = {}
@@ -357,121 +417,72 @@ class fsqr:
             period += 1
 
 
+    @timer
     def call_parallel(self):
-        pool = mp.Pool()
-        for period in self.users_by_time.keys():
-            pool.apply_async(user_analysis_parallel, args = (self.users_by_time[period], self.g)).get()
+
+        self.config_results = {}
+        self.checkin_by_user_results = {}
+
+        TASKS = [(user_analysis_parallel, (copy.deepcopy(self.users_by_time[period]), copy.deepcopy(self.g), copy.deepcopy(self.venue_loc), copy.deepcopy(period))) for period in self.users_by_time.keys()]
+
+        for task in TASKS:
+            self.task_queue.put(task)
+
+        for i in range(len(TASKS)):
+            config_results, user_results = self.done_queue.get()
+            for config in config_results.keys():
+                if config not in self.config_results:
+                    self.config_results[config] = config_results[config]
+                else:
+                    self.config_results[config]['exposures'] = self.config_results[config]['exposures'] + config_results[config]['exposures']
+                    self.config_results[config]['adoptions'] = self.config_results[config]['adoptions'] + config_results[config]['adoptions']
+            gc.collect()
+
+
+            for user in user_results.keys():
+                if user not in self.checkin_by_user_results:
+                    self.checkin_by_user_results[user] = user_results[user]
+                else:
+                    self.checkin_by_user_results[user] = dict(self.checkin_by_user_results[user].items() + user_results[user].items())
+
+        #shut down procs
+        for i in range(self.NUM_PROC):
+            self.task_queue.put('STOP')
 
 
     @timer
-    def user_analysis(self): #takes one time period, composed of before and after
-        #don't be scared by errors, they can arise in many cases
-        #ego has no friends over the dataset
-        #alter has no activity in the previous period
-        
-        errors1 = {} #egos with no friends
-        errors2 = {} #alters with no activity in the previous period
-        #based on spot checking and validating with small datset, everything looks good
+    def output(self, aggregate, full):
+        with open(aggregate, 'wb') as w: #aggregate
+            writer = csv.writer(w)
+            writer.writerow(['network config', 'adoptions', 'exposures', 'convert ratio'])
+            
+            t = OrderedDict(sorted(self.config_results.items(), key = lambda x: len(x[0])))
 
-        self.results = {}
+            for key in t.keys():
+                d = t[key]
+                config, adoptions, exposures = key, d['adoptions'], d['exposures']
+                writer.writerow([config, adoptions, exposures, float(adoptions)/float(exposures)])
 
-        for period in self.users_by_time.keys():
+        with open(full, 'wb') as w: #split up
+            writer = csv.writer(w)
+            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'components', 'config', 'long', 'lat', 'euc dist from venue', 'ego checkin'])
+            for key in self.checkin_by_user_results.keys():
+                for venue_key in self.checkin_by_user_results[key].keys():
+                    t = self.checkin_by_user_results[key][venue_key]
 
-            for user in self.users_by_time[period]['after'].keys():
-                try: #can fail if no friends
-                    ego_net = ego_graph(self.g, user)
-                    #can only influence ego to checkin places never checked in before
+                    user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin = key, venue_key, t['period'], t['neighbors'], t['triangles'], t['config'].split(':')[1], t['config'], t['loc'][0], t['loc'][1], np.linalg.norm(np.array(self.venue_loc[venue_key]) - np.array(self.user_centroid[key])), t['ego checkin']
 
-                    #for node in nodes_iter(ego_net):
-                    #    ego_net.node[node]['venues'] = []
+                    writer.writerow([user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin])
 
-                    temp = self.users_by_time[period]['after'][user]
-
-                    ego_net.node[user]['new venues'] = [temp[x]['venue'] for x in temp.keys() if temp[x]['venue'] not in self.users_by_time[period]['prev_venues'][user]] #holds new venues for period
-
-
-                except:
-                    if user not in errors1:
-                        errors1[user] = [['no friends for', user, 'in time', period, '; ego =', user]]
-                    else:
-                        errors1[user].append(['no previous for user', user, 'in time', period, '; ego =', user])                    
-                    continue
-
-
-                for vertex in ego_net.nodes(): #venues as node attributes
-                    if vertex == user:
-                        continue
-                    try:
-                        #we may not want to take a set here: number of exposures is important
-                        temp = self.users_by_time[period]['before'][vertex]
-                        ego_net.node[vertex]['venues'] = list(set([temp[x]['venue'] for x in temp.keys()]))
-
-                    except:
-                        if vertex not in errors2:
-                            errors2[vertex] = [['no previous for user', vertex, 'in time', period, '; ego =', user]]
-                        else:
-                            errors2[vertex].append(['no previous for user', vertex, 'in time', period, '; ego =', user])
-                        continue
-
-                #ego network done
-                venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()])] #should get counts
-                ego_net.node[user]['venues'] = list(set(copy.deepcopy(venues))) #all alter venues #new venues stored in ['new venues']
-
-                venues = Counter(venues)
-
-                for venue in venues.keys():
-                    #subgraph of only people who have checked into "venue" plus the ego
-
-                    sg = ego_net.subgraph([n for n, attributes in ego_net.node.items() if venue in attributes['venues']]) #if venue is in node attrbute 'venues'
-
-                    #goodbye, ego
-                    sg.remove_node(user)
-
-                    configuration = ''.join(str(x) for x in sorted(degree(sg).values()))
-                    configuration = ':'.join((configuration, str(number_connected_components(sg))))
-
-                    #store adoption for each user
-                    if configuration not in self.results:
-                        self.results[configuration] = {'exposures': 0, 'adoptions': 0}
-
-                    self.results[configuration]['exposures'] += 1
-
-                    if venue in ego_net.node[user]['new venues']:
-                        self.results[configuration]['adoptions'] += 1
-
-            print 'period', period, 'done'
-        return self.results
-
-
-
-
-
-
-
-
-
-
-
-
-
-    @timer
-    def analysis(self):
-        for period in users_by_time.keys():
-            #user_analysis....
-            pass
 
     @timer
     def summary_stats(self):
         #num users in each period
         self.num_users = {k: (len(v['before']), len(v['after'])) for k, v in self.users_by_time.iteritems()}
 
-
-    def __call__(self, durationA, durationB): #after init
+    def __call__(self, durationA, durationB, output1, output2): #after init
         self.users_by_time(durationA, durationB)
-        self.user_analysis()
-        self.summary_stats()
-
-
-
+        self.call_parallel()
+        self.output(output1, output2)
 
 
