@@ -22,19 +22,41 @@ import gc
 import numpy as np
 import scipy
 from sklearn.cluster import KMeans, MiniBatchKMeans
+from math import radians, cos, sin, asin, sqrt
 
 
 ##data path
 
 #full data
-main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareCheckins20110101-20110731.csv'
-edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
+#main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareCheckins20110101-20110731.csv'
+#edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
 
 #test data
 #main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/Fsqrtest.csv'
 #edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
 
 ##global functions
+
+#from: http://stackoverflow.com/questions/4913349/haversine-formula-in-python-bearing-and-distance-between-two-gps-points
+def haversine(lon1, lat1, lon2, lat2):
+    """
+    Calculate the great circle distance between two points 
+    on the earth (specified in decimal degrees)
+    """
+    # convert decimal degrees to radians 
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+
+    # haversine formula 
+    dlon = lon2 - lon1 
+    dlat = lat2 - lat1 
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a)) 
+
+    # 6367 km is the radius of the Earth
+    km = 6367 * c
+    return km 
+
+
 
 #worker function run by MP process
 def worker(input, output):
@@ -67,8 +89,8 @@ def flatten(items, ignore_types=(str, bytes)):
 #becuase python MP sucks
 @timer
 def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period): #pass info from 1 period
-    errors1 = {} #egos with no friends
-    errors2 = {} #alters with no activity in the previous period
+    #errors1 = {} #egos with no friends
+    #errors2 = {} #alters with no activity in the previous period
     #based on spot checking and validating with small datset, everything looks good
 
     config_results = {} #aggregate results for network config
@@ -86,12 +108,14 @@ def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period
 
             ego_net.node[user]['new venues'] = [temp[x]['venue'] for x in temp.keys() if temp[x]['venue'] not in users_by_time_during_period['prev_venues'][user]] #holds new venues for period
 
+            ego_net.node[user]['prev venues'] = users_by_time_during_period['prev_venues'][user]
+
 
         except:
-            if user not in errors1:
-                errors1[user] = [['no friends for', user, '; ego =', user]]
-            else:
-                errors1[user].append(['no previous for user', user, '; ego =', user])                    
+            #if user not in errors1:
+            #    errors1[user] = [['no friends for', user, '; ego =', user]]
+            #else:
+            #    errors1[user].append(['no previous for user', user, '; ego =', user])                    
             continue
 
 
@@ -104,14 +128,15 @@ def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period
                 ego_net.node[vertex]['venues'] = list(set([temp[x]['venue'] for x in temp.keys()]))
 
             except:
-                if vertex not in errors2:
-                    errors2[vertex] = [['no previous for user', vertex, '; ego =', user]]
-                else:
-                    errors2[vertex].append(['no previous for user', vertex, '; ego =', user])
+                #if vertex not in errors2:
+                #    errors2[vertex] = [['no previous for user', vertex, '; ego =', user]]
+                #else:
+                #    errors2[vertex].append(['no previous for user', vertex, '; ego =', user])
                 continue
 
         #ego network done
-        venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()])] #should get counts
+        venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()]) if y not in ego_net.node[user]['prev venues']] #all alter venues not in the user's prev venues
+
         ego_net.node[user]['venues'] = list(set(copy.deepcopy(venues))) #all alter venues #new venues stored in ['new venues']
 
         venues = Counter(venues)
@@ -202,7 +227,7 @@ class fsqr:
         self.task_queue = mp.Queue()
         self.done_queue = mp.Queue()
 
-        self.NUM_PROC = 6
+        self.NUM_PROC = 4
 
         #the procs literally just sit around waiting for stuff to go on the queue
         for i in range(self.NUM_PROC):
@@ -220,7 +245,7 @@ class fsqr:
             next(reader)
             line_number = 0
             for row in reader:
-                user, loc, date, venue = int(row[0]), (float(row[1]), float(row[2])), self.dateify(row[3]), int(row[4])
+                user, loc, date, venue = int(row[0]), (float(row[1]), float(row[2])), self.dateify(row[3].strip()), int(row[4])
 
                 self.by_checkin[line_number] = { 'user': user, 'loc': loc, 'date': date, 'venue': venue }
                 if venue not in self.venue_loc:
@@ -251,10 +276,10 @@ class fsqr:
 
 
         #need user centroids to compute distance
-        clusters = 4
+        clusters = 3
 
         for usr in self.user_loc.keys():
-            if len(self.user_loc[usr]) >= (clusters + 1) and len(self.user_loc[usr]) < (45):
+            if len(self.user_loc[usr]) >= (clusters + 1) and len(self.user_loc[usr]) <= (45):
                 n = np.array(self.user_loc[usr])
                 k = KMeans(init='k-means++', n_clusters = clusters, n_init=10).fit(n)
                 cent, label = k.cluster_centers_, k.labels_
@@ -270,7 +295,6 @@ class fsqr:
             else:
                 self.user_centroid[usr] = choice(self.user_loc[usr]) #random choice if not enough obs
 
-
         del self.user_loc
 
 
@@ -280,7 +304,8 @@ class fsqr:
         #assumes we read in by date
         self.time_period = {'start': self.by_checkin[0]['date'], 'stop': self.by_checkin[len(self.by_checkin.items()) - 1]['date'], 'total': self.by_checkin[len(self.by_checkin.items()) - 1]['date'] - self.by_checkin[0]['date'] } 
 
-        print self.time_period
+
+
 
 
     @staticmethod #transforms string date into datetime
@@ -450,6 +475,69 @@ class fsqr:
             self.task_queue.put('STOP')
 
 
+
+    @timer
+    def summary_stats(self):
+        #num users in each period
+        self.num_users = {k: (len(v['before']), len(v['after'])) for k, v in self.users_by_time.iteritems()}
+
+        self.user_counts_in_period = {}
+        self.venue_counts_in_period = {}
+        self.user_venue_counts_in_period = {} #keyed by user
+        self.total_user_counts = {}
+        self.total_venue_counts = {}
+
+
+        for checkin in self.by_checkin.keys():
+            t = self.by_checkin[checkin]
+
+            if t['user'] not in self.total_user_counts:
+                self.total_user_counts[t['user']] = 0
+
+            if t['venue'] not in self.total_venue_counts:
+                self.total_venue_counts[t['venue']] = 0
+
+            self.total_user_counts[t['user']] += 1
+            self.total_venue_counts[t['venue']] += 1
+
+
+        period = 0
+
+        for time_period in self.analysis_periods:
+            self.user_counts_in_period[period] = {}
+            self.venue_counts_in_period[period] = {}
+            self.user_venue_counts_in_period[period] = {}
+
+            for checkin in self.by_checkin.keys():
+                t = self.by_checkin[checkin]
+                user, venue, date = t['user'], t['venue'], t['date']
+
+                result = time_period(date)
+                if result != 2:
+                    if user not in self.user_counts_in_period[period]:
+                        self.user_counts_in_period[period][user] = 0
+                        self.user_venue_counts_in_period[period][user] = {}
+
+                    if venue not in self.user_venue_counts_in_period[period][user]:
+                        self.user_venue_counts_in_period[period][user][venue] =  0
+
+                    if venue not in self.venue_counts_in_period[period]:
+                        self.venue_counts_in_period[period][venue] = 0
+                    
+                    self.user_counts_in_period[period][user] += 1
+                    
+                    self.user_venue_counts_in_period[period][user][venue] += 1
+
+                    self.venue_counts_in_period[period][venue] += 1
+
+            period += 1
+
+
+        #other stuff to generate
+        #total checkins for each user, for each venue
+        #where user has checked in that none of their friends have (in each period)
+        #calculate exposures per checkin over time (i.e. reistance)
+
     @timer
     def output(self, aggregate, full):
         with open(aggregate, 'wb') as w: #aggregate
@@ -465,24 +553,40 @@ class fsqr:
 
         with open(full, 'wb') as w: #split up
             writer = csv.writer(w)
-            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'components', 'config', 'long', 'lat', 'euc dist from venue', 'ego checkin'])
+            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'components', 'config', 'long', 'lat', 'km from venue', 'ego checkin', 'ego total checkins', 'ego echeckins at venue', 'venue total checkins'])
             for key in self.checkin_by_user_results.keys():
                 for venue_key in self.checkin_by_user_results[key].keys():
                     t = self.checkin_by_user_results[key][venue_key]
 
-                    user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin = key, venue_key, t['period'], t['neighbors'], t['triangles'], t['config'].split(':')[1], t['config'], t['loc'][0], t['loc'][1], np.linalg.norm(np.array(self.venue_loc[venue_key]) - np.array(self.user_centroid[key])), t['ego checkin']
+                    try:
+                        uc = self.user_counts_in_period[t['period']][key]
+                    except:
+                        uc = 0
 
-                    writer.writerow([user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin])
+                    try:
+                        uvc = self.user_venue_counts_in_period[t['period']][key][venue_key]
+                    except:
+                        uvc = 0
+
+                    try:
+                        vc = self.venue_counts_in_period[t['period']][venue_key]
+                    except:
+                        vc = 0
 
 
-    @timer
-    def summary_stats(self):
-        #num users in each period
-        self.num_users = {k: (len(v['before']), len(v['after'])) for k, v in self.users_by_time.iteritems()}
+                    user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, tot_usr_counts, tot_ven_counts = key, venue_key, t['period'], t['neighbors'], t['triangles'], t['config'].split(':')[1], t['config'], t['loc'][0], t['loc'][1], haversine(self.venue_loc[venue_key][1], self.venue_loc[venue_key][0], self.user_centroid[key][1], self.user_centroid[key][0]), t['ego checkin'], uc, uvc, vc, self.total_user_counts[key], self.total_venue_counts[venue_key]
+
+
+
+                    writer.writerow([user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, tot_usr_counts, tot_ven_counts])
+
+
+
 
     def __call__(self, durationA, durationB, output1, output2): #after init
         self.users_by_time(durationA, durationB)
         self.call_parallel()
+        self.summary_stats()
         self.output(output1, output2)
 
 
