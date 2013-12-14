@@ -196,9 +196,9 @@ class interval: #could be made more efficient with time
         self.end = end
 
     def __call__(self, date): #after init
-        if self.start < date < self.cut:
+        if self.start <= date < self.cut:
             return 0
-        elif self.cut < date < self.end:
+        elif self.cut <= date <= self.end: #things on the line are in the subsequent period
             return 1
         else:
             return 2
@@ -227,7 +227,7 @@ class fsqr:
         self.task_queue = mp.Queue()
         self.done_queue = mp.Queue()
 
-        self.NUM_PROC = 4
+        self.NUM_PROC = 6
 
         #the procs literally just sit around waiting for stuff to go on the queue
         for i in range(self.NUM_PROC):
@@ -303,7 +303,6 @@ class fsqr:
         #gets difference in days and seconds between these dates
         #assumes we read in by date
         self.time_period = {'start': self.by_checkin[0]['date'], 'stop': self.by_checkin[len(self.by_checkin.items()) - 1]['date'], 'total': self.by_checkin[len(self.by_checkin.items()) - 1]['date'] - self.by_checkin[0]['date'] } 
-
 
 
 
@@ -446,7 +445,7 @@ class fsqr:
     def call_parallel(self):
 
         self.config_results = {}
-        self.checkin_by_user_results = {}
+        self.checkin_by_user_results = {} #dict keyed by user, holds list
 
         TASKS = [(user_analysis_parallel, (copy.deepcopy(self.users_by_time[period]), copy.deepcopy(self.g), copy.deepcopy(self.venue_loc), copy.deepcopy(period))) for period in self.users_by_time.keys()]
 
@@ -461,14 +460,15 @@ class fsqr:
                 else:
                     self.config_results[config]['exposures'] = self.config_results[config]['exposures'] + config_results[config]['exposures']
                     self.config_results[config]['adoptions'] = self.config_results[config]['adoptions'] + config_results[config]['adoptions']
-            gc.collect()
-
 
             for user in user_results.keys():
                 if user not in self.checkin_by_user_results:
-                    self.checkin_by_user_results[user] = user_results[user]
+                    self.checkin_by_user_results[user] = [user_results[user]]
                 else:
-                    self.checkin_by_user_results[user] = dict(self.checkin_by_user_results[user].items() + user_results[user].items())
+                    self.checkin_by_user_results[user].append(user_results[user])
+
+            gc.collect()
+
 
         #shut down procs
         for i in range(self.NUM_PROC):
@@ -553,33 +553,38 @@ class fsqr:
 
         with open(full, 'wb') as w: #split up
             writer = csv.writer(w)
-            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'components', 'config', 'long', 'lat', 'km from venue', 'ego checkin', 'ego total checkins', 'ego echeckins at venue', 'venue total checkins'])
-            for key in self.checkin_by_user_results.keys():
-                for venue_key in self.checkin_by_user_results[key].keys():
-                    t = self.checkin_by_user_results[key][venue_key]
+            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'components', 'config', 'long', 'lat', 'km from venue', 'ego checkin', 'ego period checkins', 'ego period checkins at venue', 'venue period checkins', 'user total checkins', 'venue total checkins', 'user centroid lat', 'user centroid long', 'degree', 'clust coeff', 'k core', 'deg cent'])
 
-                    try:
-                        uc = self.user_counts_in_period[t['period']][key]
-                    except:
-                        uc = 0
+            deg = self.g.degree()
+            clust = clustering(self.g)
+            core = core_number(self.g)
+            deg_cent = degree_centrality(self.g)
 
-                    try:
-                        uvc = self.user_venue_counts_in_period[t['period']][key][venue_key]
-                    except:
-                        uvc = 0
+            for key in self.checkin_by_user_results.keys(): #user key
+                for chunk in self.checkin_by_user_results[key]: #for each in list of dicts
+                    for venue_key in chunk.keys():
+                        t = chunk[venue_key]
 
-                    try:
-                        vc = self.venue_counts_in_period[t['period']][venue_key]
-                    except:
-                        vc = 0
+                        try:
+                            uc = self.user_counts_in_period[t['period']][key]
+                        except:
+                            uc = 0
+
+                        try:
+                            uvc = self.user_venue_counts_in_period[t['period']][key][venue_key]
+                        except:
+                            uvc = 0
+
+                        try:
+                            vc = self.venue_counts_in_period[t['period']][venue_key]
+                        except:
+                            vc = 0
+
+                        user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, total_user_counts, tot_ven_counts, centroid_lat, centroid_long, usr_deg, usr_clust, usr_core, usr_deg_cent = key, venue_key, t['period'], t['neighbors'], t['triangles'], t['config'].split(':')[1], t['config'], t['loc'][0], t['loc'][1], haversine(self.venue_loc[venue_key][1], self.venue_loc[venue_key][0], self.user_centroid[key][1], self.user_centroid[key][0]), t['ego checkin'], uc, uvc, vc, self.total_user_counts[key], self.total_venue_counts[venue_key], self.user_centroid[key][1], self.user_centroid[key][0], deg[key], clust[key], core[key], deg_cent[key]
 
 
-                    user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, tot_usr_counts, tot_ven_counts = key, venue_key, t['period'], t['neighbors'], t['triangles'], t['config'].split(':')[1], t['config'], t['loc'][0], t['loc'][1], haversine(self.venue_loc[venue_key][1], self.venue_loc[venue_key][0], self.user_centroid[key][1], self.user_centroid[key][0]), t['ego checkin'], uc, uvc, vc, self.total_user_counts[key], self.total_venue_counts[venue_key]
 
-
-
-                    writer.writerow([user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, tot_usr_counts, tot_ven_counts])
-
+                        writer.writerow([user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, total_user_counts, tot_ven_counts, centroid_lat, centroid_long, usr_deg, usr_clust, usr_core, usr_deg_cent])
 
 
 
