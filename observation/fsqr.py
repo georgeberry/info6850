@@ -3,7 +3,6 @@
 @created: dec 7 2013
 '''
 
-#import fuckit
 from networkx import *
 import datetime as dt
 import csv
@@ -23,6 +22,7 @@ import numpy as np
 import scipy
 from sklearn.cluster import KMeans, MiniBatchKMeans
 from math import radians, cos, sin, asin, sqrt
+import pylab as pl
 
 
 ##data path
@@ -290,7 +290,9 @@ class fsqr:
                 k = MiniBatchKMeans(init='k-means++', n_clusters = clusters, n_init=10, batch_size = 45).fit(n)
                 cent, label = k.cluster_centers_, k.labels_
                 mean_group = Counter(list(label)).most_common(1)[0][0] # most common cluster number
-                self.user_centroid[usr] = cent[mean_group]   
+                self.user_centroid[usr] = cent[mean_group]  
+
+
 
             else:
                 self.user_centroid[usr] = choice(self.user_loc[usr]) #random choice if not enough obs
