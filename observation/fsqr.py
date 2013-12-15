@@ -2,38 +2,24 @@
 @george berry (geb97@cornell.edu) (github.com/georgeberry)
 @created: dec 7 2013
 '''
-
-from networkx import *
-import datetime as dt
+#standard python imports
 import csv
-import cPickle as pickle
-import multiprocessing as mp
-from functools import wraps
+import gc
 import time
 import re
-from collections import OrderedDict, Counter, Iterable
 import copy
-import sys
-from itertools import chain
+import datetime as dt
+import multiprocessing as mp
 from random import choice
-import gc
-
-import numpy as np
-import scipy
-from sklearn.cluster import KMeans, MiniBatchKMeans
+from functools import wraps
 from math import radians, cos, sin, asin, sqrt
-import pylab as pl
+from collections import OrderedDict, Counter, Iterable
 
+#things you may have to install
+from networkx import *
+import numpy as np
+from sklearn.cluster import KMeans, MiniBatchKMeans
 
-##data path
-
-#full data
-#main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareCheckins20110101-20110731.csv'
-#edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
-
-#test data
-#main_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/Fsqrtest.csv'
-#edgelist_path = '/Users/georgeberry/Dropbox/INFO6850 project/4sq/from uaz/smaller/FoursquareFriendship.csv'
 
 ##global functions
 
@@ -55,8 +41,6 @@ def haversine(lon1, lat1, lon2, lat2):
     # 6367 km is the radius of the Earth
     km = 6367 * c
     return km 
-
-
 
 #worker function run by MP process
 def worker(input, output):
@@ -86,7 +70,7 @@ def flatten(items, ignore_types=(str, bytes)):
 
 
 #this is here because it can't be called from a class
-#becuase python MP sucks
+#becuase python MP is terrible
 @timer
 def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period): #pass info from 1 period
     #errors1 = {} #egos with no friends
@@ -96,7 +80,8 @@ def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period
     config_results = {} #aggregate results for network config
     checkin_by_user_results = {} #observation level results
 
-    for user in users_by_time_during_period['after'].keys():
+    for user in set(users_by_time_during_period['after'].keys()) | set(users_by_time_during_period['before'].keys()):
+
         try: #can fail if no friends
             ego_net = ego_graph(graph, user)
             #can only influence ego to checkin places never checked in before
@@ -123,7 +108,6 @@ def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period
             if vertex == user:
                 continue
             try:
-                #we may not want to take a set here: number of exposures is important
                 temp = users_by_time_during_period['before'][vertex]
                 ego_net.node[vertex]['venues'] = list(set([temp[x]['venue'] for x in temp.keys()]))
 
@@ -138,6 +122,8 @@ def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period
         venues = [y for y in flatten([ego_net.node[x]['venues'] for x in ego_net.nodes()]) if y not in ego_net.node[user]['prev venues']] #all alter venues not in the user's prev venues
 
         ego_net.node[user]['venues'] = list(set(copy.deepcopy(venues))) #all alter venues #new venues stored in ['new venues']
+
+        print user, period, list(set(copy.deepcopy(venues)))
 
         venues = Counter(venues)
 
@@ -180,10 +166,9 @@ def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period
     return config_results, checkin_by_user_results
 
 
-
 ## classes
 
-class interval: #could be made more efficient with time
+class interval:
     '''
     simply checks whether a date is in the time period
     returns 0 if it's before cutpoint, 1 if it's after
@@ -217,6 +202,10 @@ class fsqr:
     you probably want to call init and then just call the class with sliding window durations
     __call__ should be configured to accept these, carry out main analysis (MP'd)
     prints to CSV's
+
+    general pattern: init (2 paths) > users_by_time (2 durations in n days) > call_parallel (calls user_analysis_parallel [global]) > summary_stats > output(2 output paths)
+
+    doesn't really need to be in a class anymore [was a good idea when I started]
     '''
     @timer
     def __init__(self, main_path, edgelist_path): 
@@ -272,41 +261,34 @@ class fsqr:
             for node in nodes_iter(self.g):
                 self.g.node[node]['venues'] = []
 
-            del edgelist
-
+            del edgelist #yeah, it's unpythonic
 
         #need user centroids to compute distance
         clusters = 3
+        samp_if = 45
 
         for usr in self.user_loc.keys():
-            if len(self.user_loc[usr]) >= (clusters + 1) and len(self.user_loc[usr]) <= (45):
+            if len(self.user_loc[usr]) >= (clusters + 1) and len(self.user_loc[usr]) <= (samp_if):
                 n = np.array(self.user_loc[usr])
                 k = KMeans(init='k-means++', n_clusters = clusters, n_init=10).fit(n)
                 cent, label = k.cluster_centers_, k.labels_
                 mean_group = Counter(list(label)).most_common(1)[0][0] # most common cluster number
                 self.user_centroid[usr] = cent[mean_group]
-            elif len(self.user_loc[usr]) > 45:
+            elif len(self.user_loc[usr]) > samp_if:
                 n = np.array(self.user_loc[usr])
-                k = MiniBatchKMeans(init='k-means++', n_clusters = clusters, n_init=10, batch_size = 45).fit(n)
+                k = MiniBatchKMeans(init='k-means++', n_clusters = clusters, n_init=10, batch_size = samp_if).fit(n)
                 cent, label = k.cluster_centers_, k.labels_
                 mean_group = Counter(list(label)).most_common(1)[0][0] # most common cluster number
                 self.user_centroid[usr] = cent[mean_group]  
-
-
-
             else:
                 self.user_centroid[usr] = choice(self.user_loc[usr]) #random choice if not enough obs
 
         del self.user_loc
 
-
-        #messy 
         #gets first and last dates in data
         #gets difference in days and seconds between these dates
         #assumes we read in by date
         self.time_period = {'start': self.by_checkin[0]['date'], 'stop': self.by_checkin[len(self.by_checkin.items()) - 1]['date'], 'total': self.by_checkin[len(self.by_checkin.items()) - 1]['date'] - self.by_checkin[0]['date'] } 
-
-
 
 
     @staticmethod #transforms string date into datetime
@@ -406,6 +388,8 @@ class fsqr:
                 prev_venues[self.by_checkin[checkin]['user']] = set()
 
         for time_interval in self.analysis_periods:
+            print time_interval
+            print self.time_period
             before_cut = {}
             after_cut = {}
 
@@ -471,11 +455,9 @@ class fsqr:
 
             gc.collect()
 
-
         #shut down procs
         for i in range(self.NUM_PROC):
             self.task_queue.put('STOP')
-
 
 
     @timer
@@ -489,7 +471,6 @@ class fsqr:
         self.total_user_counts = {}
         self.total_venue_counts = {}
 
-
         for checkin in self.by_checkin.keys():
             t = self.by_checkin[checkin]
 
@@ -501,7 +482,6 @@ class fsqr:
 
             self.total_user_counts[t['user']] += 1
             self.total_venue_counts[t['venue']] += 1
-
 
         period = 0
 
@@ -533,12 +513,7 @@ class fsqr:
                     self.venue_counts_in_period[period][venue] += 1
 
             period += 1
-
-
-        #other stuff to generate
-        #total checkins for each user, for each venue
-        #where user has checked in that none of their friends have (in each period)
-        #calculate exposures per checkin over time (i.e. reistance)
+            
 
     @timer
     def output(self, aggregate, full):
@@ -555,7 +530,7 @@ class fsqr:
 
         with open(full, 'wb') as w: #split up
             writer = csv.writer(w)
-            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'components', 'config', 'long', 'lat', 'km from venue', 'ego checkin', 'ego period checkins', 'ego period checkins at venue', 'venue period checkins', 'user total checkins', 'venue total checkins', 'user centroid lat', 'user centroid long', 'degree', 'clust coeff', 'k core', 'deg cent'])
+            writer.writerow(['user', 'venue', 'period', 'neighbors', 'triangles', 'components', 'config', 'lat', 'long', 'km from venue', 'ego checkin', 'ego period checkins', 'ego period checkins at venue', 'venue period checkins', 'user total checkins', 'venue total checkins', 'user centroid lat', 'user centroid long', 'degree', 'clust coeff', 'k core', 'deg cent'])
 
             deg = self.g.degree()
             clust = clustering(self.g)
@@ -584,10 +559,7 @@ class fsqr:
 
                         user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, total_user_counts, tot_ven_counts, centroid_lat, centroid_long, usr_deg, usr_clust, usr_core, usr_deg_cent = key, venue_key, t['period'], t['neighbors'], t['triangles'], t['config'].split(':')[1], t['config'], t['loc'][0], t['loc'][1], haversine(self.venue_loc[venue_key][1], self.venue_loc[venue_key][0], self.user_centroid[key][1], self.user_centroid[key][0]), t['ego checkin'], uc, uvc, vc, self.total_user_counts[key], self.total_venue_counts[venue_key], self.user_centroid[key][1], self.user_centroid[key][0], deg[key], clust[key], core[key], deg_cent[key]
 
-
-
                         writer.writerow([user, venue, period, neighbors, triangles, components, config, lon, lat, euc_dist_from_venue, ego_checkin, ego_total_checkins_during_period, ego_checkins_at_venue_during_period, venue_total_checkins_during_period, total_user_counts, tot_ven_counts, centroid_lat, centroid_long, usr_deg, usr_clust, usr_core, usr_deg_cent])
-
 
 
     def __call__(self, durationA, durationB, output1, output2): #after init
@@ -595,5 +567,3 @@ class fsqr:
         self.call_parallel()
         self.summary_stats()
         self.output(output1, output2)
-
-
