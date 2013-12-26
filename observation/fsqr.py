@@ -75,7 +75,6 @@ def flatten(items, ignore_types=(str, bytes)):
 def user_analysis_parallel(users_by_time_during_period, graph, venue_loc, period): #pass info from 1 period
     #errors1 = {} #egos with no friends
     #errors2 = {} #alters with no activity in the previous period
-    #based on spot checking and validating with small datset, everything looks good
 
     config_results = {} #aggregate results for network config
     checkin_by_user_results = {} #observation level results

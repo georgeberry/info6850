@@ -14,12 +14,14 @@ import pydot
 from scipy import stats
 import matplotlib.pyplot as plt
 from statsmodels import graphics
+import gc
 
 #have users and repeated exposures to venues
 #the more i think about it, the more we should log # exposures
 
 filepath1 = '/Users/georgeberry/Documents/info6850/observation/results/monthly_redone_full_1.csv'
 filepath2 = '/Users/georgeberry/Documents/info6850/observation/results/monthly_redone_full_2.csv'
+filepath3 = '/Users/georgeberry/Documents/month_by_month_1checkin_egos_1st_time.csv'
 
 
 ## FUNCTIONS ##
@@ -28,40 +30,39 @@ def clean(path):
     df = read_csv(path, index_col = [0,1]) #usecols = [0,1,2,3,4,5,7,8,9,10])
 
     #drop larger ego networks
-    df = df[df.neighbors <= 5]
+    #df = df[df.neighbors <= 5]
 
     #generate dummy variables for configs
-    for elem in df['config'].unique():
-        #if elem != '0:1':
-        df['config ' + str(elem)] = df['config'] == elem
+    #for elem in df['config'].unique():
+    #    #if elem != '0:1':
+    #    df['config ' + str(elem)] = df['config'] == elem
 
-    for elem in df['period'].unique():
-        #if elem != 0:
-        df['period ' + str(elem)] = df['period'] == elem
+    #for elem in df['period'].unique():
+    #    #if elem != 0:
+    #    df['period ' + str(elem)] = df['period'] == elem
 
     print 'dummies made'
 
-    df = df.drop('config',1)
-    df = df.drop('period',1)
-    df = df.drop('degree',1)
+    #df = df.drop('config',1)
+    #df = df.drop('period',1)
 
-    df = df.astype(float)
+    #df = df.astype(float)
 
     to_drop = []
 
-    for col in xrange(len(df.columns)):
-        colname = df.columns[col]
-        if col > 17 and col < 68 and  np.sum(df.ix[0:,col]) < 100:
-            df = df[df[colname] != 1] #gets rid of checkin observations for these rare cases
-            to_drop.append(df.columns[col])
+    #for col in xrange(len(df.columns)):
+    #    colname = df.columns[col]
+    #    if col > 17 and col < 68 and  np.sum(df.ix[0:,col]) < 1000:
+    #        #df = df[df[colname] != 1] #gets rid of checkin observations for these rare cases
+    #        to_drop.append(df.columns[col])
 
     #df = df[df['config 0:1'] != 1]
     #df = df.drop('config 0:1', 1)
 
     print to_drop
 
-    for each in to_drop:
-        df = df.drop(each, 1)
+    #for each in to_drop:
+    #    df = df.drop(each, 1)
 
     return df
 
@@ -131,11 +132,12 @@ def condense(frame, index_num):
         #need to put them together
 
         for column in xrange(len(frame.columns)): #sum of 0-1 #columns, mean of others
-            if mins[column] == 0 and maxs[column] == 1: #take mean
-                arr[frame.columns[column]].append(sums[column])
+            if frame.columns[column] in ['ego period checkins', 'ego period checkins at venue', 'venue period checkins', 'venue total checkins', 'user centroid lat', 'user centroid long', 'degree', 'clust coeff', 'k core', 'deg cent']:
+                arr[frame.columns[column]].append(sums[column]/L)
             else:
-                arr[frame.columns[column]].append(means[column])
-            arr['counts'].append(L)
+                arr[frame.columns[column]].append(sums[column])
+        arr['counts'].append(L)
+
     return DataFrame(arr)
 
 
@@ -143,16 +145,15 @@ def condense(frame, index_num):
 
 #generate dummy variables for configs
 
-df = clean(filepath1)
+df = clean(filepath3)
 
 df_user = condense(df, 0)
 
 x_reg = delete_spaces(df_user)
 
-x_reg.to_csv('/Users/georgeberry/Documents/user_1_out.csv')
+x_reg.to_csv('/Users/georgeberry/Documents/wei_out.csv')
 
 y_reg = copy.deepcopy(df_user.loc[0:,'egocheckin'])
-
 
 #put stuff in regression here
 x_reg = df_user.loc[0:, ['triangles','counts','kmfromvenue', 'components', 'config00:2', 'config11:1', 'neighbors']]
@@ -175,7 +176,7 @@ df_venue = condense(df, 1)
 
 x_reg = delete_spaces(df_venue)
 
-x_reg.to_csv('/Users/georgeberry/Documents/venue_1_out.csv')
+x_reg.to_csv('/Users/georgeberry/Documents/venue_2_out.csv')
 
 y_reg = copy.deepcopy(df_venue.loc[0:,'ego checkin'])
 x_reg = df_venue.loc[0:, ['triangles','counts','kmfromvenue', 'components', 'config00:2', 'config11:1', 'neighbors']]
@@ -204,13 +205,13 @@ df2 = delete_spaces(clean(filepath2))
 y_base = copy.deepcopy(df1.loc[0:,'egocheckin'])
 y_base = y_base.replace(0, -1)
 
-x_base = df1.loc[0:, ['triangles','kmfromvenue', 'components', 'config00:2', 'config11:1', 'config0:1', 'neighbors']]
+x_base = df1.loc[0:, ['triangles', 'components']]
 
-train_rows = random.sample(x_base.index, 50000)
+train_rows = random.sample(x_base.index, 100000)
 y_train = y_base.ix[train_rows]
 x_train = x_base.ix[train_rows]
 
-test_rows = random.sample(x_base.index, 50000)
+test_rows = random.sample(x_base.index, 100000)
 y_test = y_base.ix[test_rows]
 x_test = x_base.ix[test_rows]
 
@@ -240,7 +241,7 @@ for each in izip(clf.feature_importances_, x_train.columns):
 y_base2 = copy.deepcopy(df2.loc[0:,'egocheckin'])
 y_base2 = y_base2.replace(0, -1)
 
-x_base2 = df2.loc[0:, ['triangles','kmfromvenue', 'components', 'config00:2', 'config11:1', 'config0:1', 'neighbors']]
+x_base2 = df2.loc[0:, ['triangles','kmfromvenue', 'components', 'config00:2', 'config11:1', 'config0:1']]
 
 
 print clf.score(x_base2, y_base2)
